@@ -128,10 +128,11 @@ export async function buildApp() {
         // Vite assets are content-hashed → cache forever. index.html must be
         // revalidated every load, or a stale copy keeps requesting JS/CSS
         // hashes that no longer exist after a rebuild (blank app for an hour).
+        // (@fastify/static v10 hands this callback the FastifyReply.)
         if (filePath.includes(`${sep}assets${sep}`)) {
-          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          res.header("Cache-Control", "public, max-age=31536000, immutable");
         } else {
-          res.setHeader("Cache-Control", "no-cache");
+          res.header("Cache-Control", "no-cache");
         }
       },
     });
