@@ -29,6 +29,7 @@ Upload a batch of exported JPEGs, share a private gallery link with your client 
 - **The Lightroom pick-list export** — the headline feature. One click copies your client's favorites as a filename list you paste into Lightroom's Library Filter. [How it works ↓](#the-lightroom-workflow)
 - **Know when picks are ready** — clients tap "Send my picks" (with an optional note) to submit their selection; you get a "Picks ready" badge and can be pinged on a webhook (Discord, Slack, ntfy). No more guessing whether they're done.
 - **Account management** built in: change your email or password (which signs out every other device), sign out everywhere, or turn on two-factor authentication.
+- **Passkey sign-in** — add a passkey (Touch ID, Face ID, a device PIN, or a security key) from Account settings and sign in with one tap: no password typed, no authenticator code, nothing to forget. Works entirely self-hosted — no Google/Apple account involved, WebAuthn is built into every modern browser. Your password stays as a fallback.
 - **Automatic backups** of the database daily, plus on-demand snapshots you can download straight from the dashboard.
 
 **For your client (no account, ever):**
@@ -129,13 +130,13 @@ Migrations run automatically on start. Tagged releases publish a prebuilt multi-
 
 ## Troubleshooting
 
-**Forgot the admin password.** While signed in, change it any time from the account menu. If you're fully locked out, there's no email reset (single-admin tool by design) — reset the account with:
+**Forgot the admin password.** While signed in, change it any time from the account menu — and consider adding a **passkey** (Account settings → Passkeys) so future sign-ins don't depend on remembering it at all. If you're fully locked out, there's no email reset (single-admin tool by design) — reset the account with:
 
 ```bash
-docker compose exec app sh -c 'sqlite3 /data/db/app.sqlite "DELETE FROM admin_sessions; DELETE FROM admin_users;"'
+docker compose exec app sh -c 'sqlite3 /data/db/app.sqlite "DELETE FROM admin_sessions; DELETE FROM admin_passkeys; DELETE FROM admin_users;"'
 ```
 
-Reload the app and the setup form reappears. Galleries, photos, and favorites are untouched — only the login is reset. (Both tables are cleared because the sqlite3 CLI doesn't enforce foreign keys, so old sessions would otherwise be orphaned.)
+Reload the app and the setup form reappears. Galleries, photos, and favorites are untouched — only the login is reset. (All three tables are cleared because the sqlite3 CLI doesn't enforce foreign keys, so old sessions and passkeys would otherwise be orphaned — an orphaned passkey can't sign in, but your browser would still offer it. Re-add your passkeys from Account settings afterwards.)
 
 **Port already in use.** Set `LUMINA_PORT` in `.env` (e.g. `LUMINA_PORT=4444`) and run `docker compose up -d`. The installer handles this automatically on fresh installs.
 
@@ -146,7 +147,7 @@ Reload the app and the setup form reappears. Galleries, photos, and favorites ar
 - **Backend:** Fastify + SQLite (via Drizzle ORM) + sharp for image processing, run directly from TypeScript by `tsx` — there's no server compile step.
 - **Frontend:** a React + Vite single-page app (no SSR — private galleries have no SEO value). Self-hosted variable fonts, no external assets.
 - **One process, one container:** background image processing, backups, and cleanup all run as loops inside the same Node process that serves HTTP. No Postgres, no Redis, no separate worker, no required cloud dependency.
-- **Two auth systems by design:** DB-backed sessions for the single admin; stateless signed cookies for gallery access, so a password change instantly invalidates every previously issued link.
+- **Two auth systems by design:** DB-backed sessions for the single admin (reachable by password or passkey — both mint the same revocable session); stateless signed cookies for gallery access, so a password change instantly invalidates every previously issued link.
 
 For the full architecture and rationale, see **[CLAUDE.md](CLAUDE.md)**.
 

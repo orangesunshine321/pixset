@@ -9,6 +9,7 @@ import "./types.ts";
 import { config } from "./config.ts";
 import { setupRoutes } from "./routes/setup.ts";
 import { adminAuthRoutes } from "./routes/admin/auth.ts";
+import { passkeyLoginRoutes, passkeyManageRoutes } from "./routes/admin/passkeys.ts";
 import { photoRoutes } from "./routes/photos.ts";
 import { galleryAdminRoutes } from "./routes/admin/galleries.ts";
 import { uploadRoutes } from "./routes/admin/uploads.ts";
@@ -104,6 +105,8 @@ export async function buildApp() {
 
   await app.register(setupRoutes);
   await app.register(adminAuthRoutes);
+  await app.register(passkeyLoginRoutes);
+  await app.register(passkeyManageRoutes);
   await app.register(photoRoutes);
   await app.register(galleryAdminRoutes);
   await app.register(uploadRoutes);

@@ -26,6 +26,33 @@ export const adminUsers = sqliteTable("admin_users", {
   updatedAt: timestamp("updated_at"),
 });
 
+/** WebAuthn passkeys — an alternative way to sign in to the SAME admin account
+ * (Touch ID / Face ID / security key), not a second account system. A passkey
+ * login satisfies both factors in one gesture (possession + biometric/PIN, user
+ * verification is required end-to-end), so it never additionally prompts for a
+ * TOTP code. The password always remains as a fallback. */
+export const adminPasskeys = sqliteTable(
+  "admin_passkeys",
+  {
+    // The authenticator's credential ID (base64url) — globally unique by
+    // construction, and exactly what an authentication response is keyed by.
+    id: text("id").primaryKey(),
+    adminId: text("admin_id")
+      .notNull()
+      .references(() => adminUsers.id, { onDelete: "cascade" }),
+    name: text("name").notNull(), // operator-chosen label, e.g. "MacBook Touch ID"
+    publicKey: text("public_key").notNull(), // COSE public key, base64url
+    // Signature counter some authenticators increment per use (many passkey
+    // providers always report 0). Persisted so clone detection can fire.
+    counter: integer("counter").notNull().default(0),
+    transports: text("transports"), // JSON array hint for the browser, e.g. ["internal"]
+    backedUp: integer("backed_up", { mode: "boolean" }).notNull().default(false), // synced to a cloud keychain?
+    createdAt: timestamp("created_at"),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [index("admin_passkeys_admin_id_idx").on(table.adminId)],
+);
+
 /** DB-backed (not stateless): admin traffic is low-volume, so real per-device revocation is cheap. */
 export const adminSessions = sqliteTable(
   "admin_sessions",

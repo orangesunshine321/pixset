@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  browserSupportsWebAuthn,
+  startRegistration,
+  type PublicKeyCredentialCreationOptionsJSON,
+} from "@simplewebauthn/browser";
 import { api, ApiError } from "../../lib/api.ts";
 
 interface Me {
@@ -62,6 +67,8 @@ export function AccountDialog({ email, onClose }: { email: string; onClose: () =
 
         <ChangePasswordForm />
         <div className="my-6 border-t border-line" />
+        <PasskeysSection />
+        <div className="my-6 border-t border-line" />
         <TwoFactorSection
           onChanged={() => queryClient.invalidateQueries({ queryKey: ["admin-me"] })}
           onHoldChange={setHeld}
@@ -76,6 +83,228 @@ export function AccountDialog({ email, onClose }: { email: string; onClose: () =
         />
       </div>
     </div>
+  );
+}
+
+interface PasskeyItem {
+  id: string;
+  name: string;
+  backedUp: boolean;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+function PasskeysSection() {
+  const queryClient = useQueryClient();
+  const supported = browserSupportsWebAuthn();
+  const list = useQuery({
+    queryKey: ["admin-passkeys"],
+    queryFn: () => api.get<{ passkeys: PasskeyItem[] }>("/api/admin/account/passkeys"),
+  });
+  const passkeys = list.data?.passkeys ?? [];
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["admin-passkeys"] });
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <h3 className="text-sm font-medium text-text-1">Passkeys</h3>
+        <p className="mt-0.5 text-xs text-text-3">
+          Sign in with Touch ID, Face ID, or a security key — one tap, no password, no
+          authenticator code. Your password keeps working as a fallback.
+        </p>
+      </div>
+      {passkeys.length > 0 && (
+        <ul className="flex flex-col divide-y divide-line rounded-lg border border-line bg-canvas">
+          {passkeys.map((pk) => (
+            <PasskeyRow key={pk.id} passkey={pk} onChanged={refresh} />
+          ))}
+        </ul>
+      )}
+      {supported ? (
+        <AddPasskey onAdded={refresh} />
+      ) : (
+        <p className="text-xs text-text-3">This browser doesn't support passkeys.</p>
+      )}
+    </div>
+  );
+}
+
+function PasskeyRow({ passkey, onChanged }: { passkey: PasskeyItem; onChanged: () => void }) {
+  const [removing, setRemoving] = useState(false);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function remove(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await api.delete(`/api/admin/account/passkeys/${encodeURIComponent(passkey.id)}`, { password });
+      onChanged();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        // Already removed from another tab/device — refreshing the list is the
+        // success outcome; "try again" could never work.
+        onChanged();
+      } else if (err instanceof ApiError && err.message === "wrong_password") {
+        setError("Password is incorrect.");
+      } else {
+        setError("Couldn't remove the passkey. Try again.");
+      }
+    } finally {
+      // On success the refetch unmounts this row; if that refetch fails the
+      // row must not be left stuck on a disabled "Removing…" button.
+      setBusy(false);
+    }
+  }
+
+  return (
+    <li className="flex flex-col gap-2 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm text-text-1">{passkey.name}</p>
+          <p className="text-xs text-text-3">
+            Added {new Date(passkey.createdAt).toLocaleDateString()}
+            {passkey.lastUsedAt
+              ? ` · last used ${new Date(passkey.lastUsedAt).toLocaleDateString()}`
+              : " · never used"}
+          </p>
+        </div>
+        <button
+          onClick={() => {
+            setRemoving((v) => !v);
+            setError(null);
+            setPassword("");
+          }}
+          className="shrink-0 text-xs font-medium text-text-2 underline decoration-line-strong underline-offset-2 hover:text-text-1"
+        >
+          {removing ? "Cancel" : "Remove"}
+        </button>
+      </div>
+      {removing && (
+        <form onSubmit={remove} className="flex flex-wrap items-center gap-2">
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Confirm with your password"
+            autoComplete="current-password"
+            className="min-w-0 flex-1 rounded-lg border border-line bg-canvas px-3 py-1.5 text-sm text-text-1 outline-none transition-colors focus:border-line-strong"
+          />
+          <button
+            type="submit"
+            disabled={busy || !password}
+            className="rounded-lg bg-accent-500 px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {busy ? "Removing…" : "Remove"}
+          </button>
+          {error && <p className="w-full text-sm text-accent-500">{error}</p>}
+        </form>
+      )}
+    </li>
+  );
+}
+
+function AddPasskey({ onAdded }: { onAdded: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function add(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const { challengeId, options } = await api.post<{
+        challengeId: string;
+        options: PublicKeyCredentialCreationOptionsJSON;
+      }>("/api/admin/account/passkeys/options");
+      const response = await startRegistration({ optionsJSON: options });
+      await api.post("/api/admin/account/passkeys", {
+        challengeId,
+        password,
+        name: name.trim(),
+        response,
+      });
+      setOpen(false);
+      setName("");
+      setPassword("");
+      onAdded();
+    } catch (err) {
+      if (err instanceof Error && err.name === "SecurityError") {
+        // Browsers only allow passkeys on a domain (or localhost) — a bare IP
+        // address like http://192.168.1.20:7373 can never work.
+        setError("Passkeys need a domain name (or localhost) — they can't be created when the app is opened by IP address.");
+      } else if (err instanceof Error && err.name === "InvalidStateError") {
+        setError("This device is already registered as a passkey.");
+      } else if (err instanceof Error && err.name === "NotAllowedError") {
+        setError(null); // the operator dismissed the browser prompt
+      } else if (err instanceof ApiError && err.message === "wrong_password") {
+        setError("Password is incorrect.");
+      } else if (err instanceof ApiError && err.message === "already_registered") {
+        setError("This device is already registered as a passkey.");
+      } else {
+        setError("Couldn't add the passkey. Try again.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="self-start rounded-lg bg-text-1 px-4 py-2 text-sm font-medium text-invert transition-opacity hover:opacity-90"
+      >
+        Add a passkey
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={add} className="flex flex-col gap-3 rounded-lg border border-line bg-canvas p-4">
+      <p className="text-xs text-text-3">
+        Your browser will ask you to confirm with Touch ID, Face ID, your device PIN, or a security
+        key.
+      </p>
+      <DialogField
+        id="passkey-name"
+        label="Name"
+        type="text"
+        value={name}
+        onChange={setName}
+        hint="So you can tell your passkeys apart, e.g. “MacBook Touch ID”."
+      />
+      <DialogField
+        id="passkey-password"
+        label="Password"
+        type="password"
+        value={password}
+        onChange={setPassword}
+        autoComplete="current-password"
+      />
+      {error && <p className="text-sm text-accent-500">{error}</p>}
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={busy || !password}
+          className="rounded-lg bg-text-1 px-4 py-2 text-sm font-medium text-invert transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {busy ? "Waiting for your device…" : "Create passkey"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="rounded-lg px-4 py-2 text-sm font-medium text-text-2 hover:bg-surface-3"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 

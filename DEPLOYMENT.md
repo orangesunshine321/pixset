@@ -111,6 +111,10 @@ run down this list once:
       if the app is reachable from the internet. It adds a code from any
       authenticator app to your login, plus one-time backup codes — the
       biggest single reduction in account-takeover risk on a public URL.
+- [ ] **Add a passkey** (Account settings → Passkeys) for day-to-day sign-in:
+      one Touch ID / Face ID / security-key tap covers both factors, is
+      phishing-resistant by construction, and can't be forgotten. Keep the
+      password (+ 2FA) as the fallback it becomes.
 - [ ] **Keep the app reachable only through your proxy/tunnel.** The default
       compose file binds to `127.0.0.1`, so nothing is exposed directly even
       if the host firewall is open. Don't remove that prefix unless a
